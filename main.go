@@ -28,7 +28,8 @@ var (
 
 	source []string
 
-	downloader = "aria2c"
+	downloader    = "aria2c"
+	downloaderopt = "--auto-file-renaming=false"
 
 	pkgdir string
 	srcdir string
@@ -48,7 +49,6 @@ func main() {
 	if strings.Contains(strings.Join(os.Args, ""), "PackageWithFakeroot") {
 		packagename = os.Args[2]
 		pkgdir = os.Args[5]
-		fmt.Println(os.Args[2])
 		version = os.Args[3]
 		startpack(os.Args[4])
 		os.Exit(0)
@@ -124,6 +124,7 @@ func main() {
 				//not var!
 			}
 		}
+		fmt.Println(os.Environ())
 
 		if strings.Contains(textFile[i], "build:") {
 			status = "build"
@@ -136,21 +137,25 @@ func main() {
 				if strings.Contains(v, ".git") {
 					executecmd("git", "clone", v)
 				} else {
-					executecmd(downloader, v)
+					executecmd(downloader, downloaderopt, v)
 				}
 			}
+			continue
 		} else if strings.Contains(textFile[i], "package:") {
 			os.RemoveAll(pkgdir)
 			os.Chdir(pkgdir)
 			status = "package"
 			fmt.Println(intb, "Start packaging...")
+			continue
 		}
+
 		if strings.HasPrefix(textFile[i], "cd") {
 			os.Chdir(strings.Split(textFile[i], " ")[1])
 			fmt.Println(os.Getwd())
-		} else if strings.HasPrefix(textFile[i], "export") {
-			splitcmd := strings.Split(textFile[i][1:], " ")
-			splittedvar := strings.Split(splitcmd[2], "=")
+		} else if strings.Contains(textFile[i], "export") {
+			splitcmd := strings.SplitN(textFile[i], " ", 2)
+			fmt.Println(len(splitcmd))
+			splittedvar := strings.SplitN(splitcmd[1], "=", 2)
 			os.Setenv(splittedvar[0], splittedvar[1])
 		} else if strings.HasPrefix(textFile[i], ":end") {
 			switch strings.Split(textFile[i], " ")[1] {
@@ -165,7 +170,10 @@ func main() {
 		} else if status == "build" || status == "package" {
 			splitcmd := strings.Split(textFile[i], " ")
 			fmt.Println(os.Getwd())
-			executecmd(splitcmd[0], splitcmd[1:]...)
+			err := executecmdwitherror(splitcmd[0], splitcmd[1:]...)
+			if err != nil {
+				log.Fatal(err)
+			}
 		}
 
 	}
@@ -176,8 +184,18 @@ func executecmd(cmdname string, args ...string) {
 	toexec.Stdin = os.Stdin
 	toexec.Stdout = os.Stdout
 	toexec.Stderr = os.Stderr
+	toexec.Env = os.Environ()
 	toexec.Start()
 	toexec.Wait()
+}
+
+func executecmdwitherror(cmdname string, args ...string) error {
+	toexec := exec.Command(cmdname, args...)
+	toexec.Stdin = os.Stdin
+	toexec.Stdout = os.Stdout
+	toexec.Stderr = os.Stderr
+	toexec.Env = os.Environ()
+	return toexec.Run()
 }
 
 func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {
@@ -185,6 +203,7 @@ func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {
 	toexec.Stdin = infile
 	toexec.Stdout = os.Stdout
 	toexec.Stderr = os.Stderr
+	toexec.Env = os.Environ()
 	toexec.Start()
 	toexec.Wait()
 }

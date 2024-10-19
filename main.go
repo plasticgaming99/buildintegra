@@ -124,13 +124,11 @@ func main() {
 				//not var!
 			}
 		}
-		fmt.Println(os.Environ())
 
 		if strings.Contains(textFile[i], "build:") {
 			status = "build"
 			fmt.Println(intb, "Start build...")
 			os.Chdir(srcdir)
-			fmt.Println(os.Getwd())
 			// prep source
 			for _, v := range source {
 				fmt.Println("executed")
@@ -151,10 +149,8 @@ func main() {
 
 		if strings.HasPrefix(textFile[i], "cd") {
 			os.Chdir(strings.Split(textFile[i], " ")[1])
-			fmt.Println(os.Getwd())
 		} else if strings.Contains(textFile[i], "export") {
 			splitcmd := strings.SplitN(textFile[i], " ", 2)
-			fmt.Println(len(splitcmd))
 			splittedvar := strings.SplitN(splitcmd[1], "=", 2)
 			os.Setenv(splittedvar[0], splittedvar[1])
 		} else if strings.HasPrefix(textFile[i], ":end") {
@@ -169,7 +165,6 @@ func main() {
 			}
 		} else if status == "build" || status == "package" {
 			splitcmd := strings.Split(textFile[i], " ")
-			fmt.Println(os.Getwd())
 			err := executecmdwitherror(splitcmd[0], splitcmd[1:]...)
 			if err != nil {
 				log.Fatal(err)
@@ -214,7 +209,6 @@ func startpackwithfakeroot(intgroot string) {
 
 func startpack(intgroot string) {
 	os.Chdir(pkgdir)
-	fmt.Println(os.Getwd())
 	archivename := intgroot + "/" + packagename + "-" + version + ".intg.tar.zst"
 	executecmd("bsdtar", "-cvf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
 		"--exclude", ".MTREE", ".PACKAGE",

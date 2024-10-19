@@ -36,12 +36,9 @@ var (
 
 var intb = "= INTB =>"
 
-func initDirs() {
+func initBuildDir() {
 	if _, err := os.Stat("source"); err != nil {
 		os.Mkdir("source", os.ModePerm)
-	}
-	if _, err := os.Stat("package"); err != nil {
-		os.Mkdir("package", os.ModePerm)
 	}
 }
 
@@ -68,7 +65,7 @@ func main() {
 		fmt.Println("internal error during getting root dir")
 	}
 
-	initDirs()
+	initBuildDir()
 
 	os.Setenv("intgroot", intgrootdir)
 	os.Setenv("srcdir", intgrootdir+"/source")
@@ -143,6 +140,7 @@ func main() {
 				}
 			}
 		} else if strings.Contains(textFile[i], "package:") {
+			os.RemoveAll(pkgdir)
 			os.Chdir(pkgdir)
 			status = "package"
 			fmt.Println(intb, "Start packaging...")

@@ -80,7 +80,8 @@ func main() {
 	status := "setup"
 	for i := 0; i < len(textFile); i++ {
 		textFile[i] = strings.TrimSpace(textFile[i])
-		if strings.HasPrefix(textFile[i], "//") {
+
+		if strings.HasPrefix(textFile[i], "//") || textFile[i] == "" {
 			continue
 		}
 		if strings.Contains(textFile[i], "$") {
@@ -89,6 +90,18 @@ func main() {
 			textFile[i] = strings.ReplaceAll(textFile[i], "$intgroot", intgrootdir)
 			textFile[i] = strings.ReplaceAll(textFile[i], "$pkgver", version)
 		}
+
+		if strings.HasSuffix(textFile[i], `\`) {
+			ii := 0
+			for ii = 0; len(textFile[i:]) > ii; ii++ {
+				if !strings.HasSuffix(textFile[i+ii], `\`) {
+					break
+				}
+			}
+			textFile[i] = strings.ReplaceAll(formatNewLine(textFile[i:i+ii+1]), `\`, "")
+			textFile = append(textFile[:i+1], textFile[i+ii+1:]...)
+		}
+
 		if strings.Contains(textFile[i], " = ") && status == "setup" {
 			maybevar := strings.Split(textFile[i], " = ")
 			switch maybevar[0] {
@@ -164,7 +177,7 @@ func main() {
 				startpackwithfakeroot(intgrootdir)
 			}
 		} else if status == "build" || status == "package" {
-			splitcmd := strings.Split(textFile[i], " ")
+			splitcmd := splitNparse(textFile[i])
 			err := executecmdwitherror(splitcmd[0], splitcmd[1:]...)
 			if err != nil {
 				log.Fatal(err)
@@ -210,7 +223,7 @@ func startpackwithfakeroot(intgroot string) {
 func startpack(intgroot string) {
 	os.Chdir(pkgdir)
 	archivename := intgroot + "/" + packagename + "-" + version + ".intg.tar.zst"
-	executecmd("bsdtar", "-cvf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
+	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
 		"--exclude", ".MTREE", ".PACKAGE",
 	)
 	archivefile, err := os.Open(archivename)
@@ -221,12 +234,14 @@ func startpack(intgroot string) {
 
 	archivereader := bufio.NewReader(archivefile)
 
+	fmt.Println(intb, "Generating MTREE File with bsdtar...")
 	executecmdwithstdinfile(archivereader, "bsdtar", "-cf", ".MTREE",
 		"--format=mtree", "--options", "!all,use-set,type,uid,gid,mode,time,size,sha256,link",
 		"@-", "--exclude", ".MTREE", ".PACKAGE",
 	)
 
-	executecmd("bsdtar", "-cvf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".")
+	fmt.Println(intb, "Creating main archive with bsdtar...")
+	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".")
 
 }
 
@@ -285,4 +300,24 @@ func generatePackInfo() (reText string) {
 		reText = formatNewLine(txt)
 	}
 	return
+}
+
+func splitNparse(cmdIn string) (returnSlice []string) {
+	cmdrune := []rune(cmdIn)
+	returnSlice = append(returnSlice, "")
+	currentSlice := 0
+	for prevChar := int(0); len(cmdrune) > prevChar; prevChar++ {
+		if string(cmdrune[prevChar]) == `"` {
+			i := strings.Index(string(cmdrune[prevChar+1:]), `"`)
+			prevChar += 1
+			returnSlice[currentSlice] += string(cmdrune[prevChar : prevChar+i])
+			prevChar += i
+		} else if string(cmdrune[prevChar]) == ` ` {
+			currentSlice++
+			returnSlice = append(returnSlice, "")
+		} else {
+			returnSlice[currentSlice] += string(cmdrune[prevChar])
+		}
+	}
+	return returnSlice
 }

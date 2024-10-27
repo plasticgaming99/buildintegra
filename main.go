@@ -13,7 +13,7 @@ import (
 )
 
 var (
-	packagename  = "Example"
+	packagename  []string
 	version      = ""
 	release      = 1
 	license      = "Unknown"
@@ -33,6 +33,9 @@ var (
 
 	pkgdir string
 	srcdir string
+
+	fakeroot          = false
+	fakerootToPackage = ""
 )
 
 var intb = "= INTB =>"
@@ -43,15 +46,39 @@ func initBuildDir() {
 	}
 }
 
+// Real init that read BuildIntegra configuration.
+func init() {
+	_, err := os.Stat("/etc/bintegra.conf")
+	if err != nil {
+		return
+	}
+
+	file, err := os.ReadFile("/etc/bintegra.conf")
+	if err != nil {
+		fmt.Println(intb, "Error reading configuration")
+		return
+	}
+	configfile := strings.Split(string(file), "\n")
+	file = nil
+	for i := 0; i < len(configfile); i++ {
+		if strings.Contains(configfile[i], `"`) {
+			configfile[i] = strings.ReplaceAll(configfile[i], `"`, "")
+		}
+		if strings.Contains(configfile[i], "export") {
+			splitcmd := strings.SplitN(configfile[i], " ", 2)
+			splittedvar := strings.SplitN(splitcmd[1], "=", 2)
+			os.Setenv(splittedvar[0], splittedvar[1])
+		}
+	}
+}
+
 func main() {
 	fmt.Println("buildintegra")
+	fmt.Println(strings.Join(os.Args, ""))
 	// start from 2, 2 for pkgname, 3 for pkgver, 4 for intgroot, 5 for pkgdir
 	if strings.Contains(strings.Join(os.Args, ""), "PackageWithFakeroot") {
-		packagename = os.Args[2]
-		pkgdir = os.Args[5]
-		version = os.Args[3]
-		startpack(os.Args[4])
-		os.Exit(0)
+		fakeroot = true
+		fakerootToPackage = os.Args[2]
 	}
 
 	file, err := os.ReadFile("INTGBUILD")
@@ -72,18 +99,25 @@ func main() {
 	srcdir = intgrootdir + "/source"
 	os.Setenv("pkgdir", intgrootdir+"/package")
 	pkgdir = intgrootdir + "/package"
-	os.Setenv("pkgver", version)
-	os.Setenv("pkgname", packagename)
 
 	textf := string(file)
 	textFile := strings.Split(textf, "\n")
 	status := "setup"
+	frSkipFunc := false
+	shiftpack := int(0)
 	for i := 0; i < len(textFile); i++ {
 		textFile[i] = strings.TrimSpace(textFile[i])
+		if frSkipFunc && strings.HasPrefix(textFile[i], ":end") {
+			frSkipFunc = false
+			continue
+		} else if frSkipFunc {
+			continue
+		}
 
 		if strings.HasPrefix(textFile[i], "//") || textFile[i] == "" {
 			continue
 		}
+
 		if strings.Contains(textFile[i], "$") {
 			textFile[i] = strings.ReplaceAll(textFile[i], "$pkgdir", pkgdir)
 			textFile[i] = strings.ReplaceAll(textFile[i], "$srcdir", srcdir)
@@ -98,15 +132,13 @@ func main() {
 					break
 				}
 			}
-			textFile[i] = strings.ReplaceAll(formatNewLine(textFile[i:i+ii+1]), `\`, "")
 			textFile = append(textFile[:i+1], textFile[i+ii+1:]...)
 		}
-
-		if strings.Contains(textFile[i], " = ") && status == "setup" {
+		if strings.Contains(textFile[i], " = ") && !strings.Contains(textFile[i], "export") && (status == "setup" || fakeroot) {
 			maybevar := strings.Split(textFile[i], " = ")
 			switch maybevar[0] {
 			case "packagename":
-				packagename = maybevar[1]
+				packagename = append(packagename, maybevar[1])
 			case "version":
 				version = maybevar[1]
 			case "release":
@@ -131,20 +163,26 @@ func main() {
 				depends = append(depends, maybevar[1])
 			case "provides":
 				provides = append(provides, maybevar[1])
+			case "url":
+				url = maybevar[1]
 			case "source":
 				source = append(source, maybevar[1])
 			default:
 				//not var!
 			}
+			continue
 		}
 
 		if strings.Contains(textFile[i], "build:") {
+			if fakeroot {
+				frSkipFunc = true
+				continue
+			}
 			status = "build"
 			fmt.Println(intb, "Start build...")
 			os.Chdir(srcdir)
 			// prep source
 			for _, v := range source {
-				fmt.Println("executed")
 				if strings.Contains(v, ".git") {
 					executecmd("git", "clone", v)
 				} else {
@@ -152,12 +190,52 @@ func main() {
 				}
 			}
 			continue
-		} else if strings.Contains(textFile[i], "package:") {
-			os.RemoveAll(pkgdir)
-			os.Chdir(pkgdir)
-			status = "package"
-			fmt.Println(intb, "Start packaging...")
-			continue
+		} else if strings.HasPrefix(textFile[i], "package") {
+			if len(packagename) == 1 {
+				if !fakeroot {
+					fmt.Println(intb, "Start packaging...")
+				}
+				os.RemoveAll(pkgdir)
+				os.Chdir(intgrootdir)
+				status = "package"
+				os.Mkdir("package", os.ModePerm)
+				if !fakeroot {
+					fmt.Println(intb, "Start fakeroot environment...")
+					executecmd("fakeroot", os.Args[0], "PackageWithFakeroot", packagename[0])
+					frSkipFunc = true
+				}
+				continue
+			} else {
+				toSplit := []rune(textFile[i])
+				toSplit = toSplit[:len(toSplit)-1]
+				subpackagename := strings.Split(string(toSplit), " ")[1]
+				subpackageavaliable := false
+				for i := 0; len(packagename) > i; i++ {
+					if subpackagename == packagename[i] {
+						subpackageavaliable = true
+					}
+				}
+				if !subpackageavaliable {
+					continue
+				}
+				if fakeroot && fakerootToPackage != packagename[shiftpack] {
+					frSkipFunc = true
+					continue
+				}
+				if !fakeroot {
+					fmt.Println(intb, "Start packaging ", subpackagename, " ...")
+				}
+				os.RemoveAll(pkgdir)
+				os.Chdir(intgrootdir)
+				os.Mkdir("package", os.ModePerm)
+				status = "package"
+				if !fakeroot {
+					fmt.Println(intb, "Start fakeroot environment...")
+					executecmd("fakeroot", os.Args[0], "PackageWithFakeroot", subpackagename)
+					frSkipFunc = true
+				}
+				continue
+			}
 		}
 
 		if strings.HasPrefix(textFile[i], "cd") {
@@ -172,18 +250,31 @@ func main() {
 				status = "buildfin"
 				fmt.Println(intb, "Build Finished.")
 			case "package":
-				status = "packfin"
-				os.WriteFile(pkgdir+"/.PACKAGE", []byte(generatePackInfo()), 0644)
-				startpackwithfakeroot(intgrootdir)
+				if !fakeroot {
+					continue
+				}
+				if len(packagename) == 1 {
+					os.WriteFile(pkgdir+"/.PACKAGE", []byte(generatePackInfo(packagename[0])), 0644)
+					startpack(intgrootdir, packagename[0])
+					status = "packfin"
+					fmt.Println(intb, "Package Finished!!")
+					os.Exit(0)
+				} else {
+					os.WriteFile(pkgdir+"/.PACKAGE", []byte(generatePackInfo(packagename[shiftpack])), 0644)
+					startpack(intgrootdir, packagename[shiftpack])
+				}
 			}
 		} else if status == "build" || status == "package" {
 			splitcmd := splitNparse(textFile[i])
 			err := executecmdwitherror(splitcmd[0], splitcmd[1:]...)
 			if err != nil {
-				log.Fatal(err)
+				fmt.Println(err)
+				continue
 			}
 		}
-
+		if status == "packfin" && len(packagename) == 1 {
+			os.Exit(0)
+		}
 	}
 }
 
@@ -216,16 +307,10 @@ func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {
 	toexec.Wait()
 }
 
-func startpackwithfakeroot(intgroot string) {
-	executecmd("fakeroot", os.Args[0], "PackageWithFakeroot", packagename, version, intgroot, pkgdir)
-}
-
-func startpack(intgroot string) {
+func startpack(intgroot string, packagename string) {
 	os.Chdir(pkgdir)
 	archivename := intgroot + "/" + packagename + "-" + version + ".intg.tar.zst"
-	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
-		"--exclude", ".MTREE", ".PACKAGE",
-	)
+	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".")
 	archivefile, err := os.Open(archivename)
 	if err != nil {
 		log.Fatal("error during reading archive file")
@@ -237,7 +322,7 @@ func startpack(intgroot string) {
 	fmt.Println(intb, "Generating MTREE File with bsdtar...")
 	executecmdwithstdinfile(archivereader, "bsdtar", "-cf", ".MTREE",
 		"--format=mtree", "--options", "!all,use-set,type,uid,gid,mode,time,size,sha256,link",
-		"@-", "--exclude", ".MTREE", ".PACKAGE",
+		"@-",
 	)
 
 	fmt.Println(intb, "Creating main archive with bsdtar...")
@@ -262,7 +347,7 @@ func formatNewLine(strin []string) (ret string) {
 	return
 }
 
-func generatePackInfo() (reText string) {
+func generatePackInfo(packagename string) (reText string) {
 	{
 		var txt []string
 		apstr := appendStrings(

@@ -19,7 +19,7 @@ var (
 	license      = "Unknown"
 	architecture = "x86_64"
 	description  = "A package."
-	url          = "https://example.org"
+	url          = ""
 	depends      []string
 	optdeps      []string
 	builddeps    []string
@@ -218,7 +218,7 @@ func main() {
 				if !subpackageavaliable {
 					continue
 				}
-				if fakeroot && fakerootToPackage != packagename[shiftpack] {
+				if fakeroot && fakerootToPackage != subpackagename {
 					frSkipFunc = true
 					continue
 				}
@@ -261,14 +261,14 @@ func main() {
 					os.Exit(0)
 				} else {
 					os.WriteFile(pkgdir+"/.PACKAGE", []byte(generatePackInfo(packagename[shiftpack])), 0644)
-					startpack(intgrootdir, packagename[shiftpack])
+					startpack(intgrootdir, fakerootToPackage)
 				}
 			}
 		} else if status == "build" || status == "package" {
 			splitcmd := splitNparse(textFile[i])
 			err := executecmdwitherror(splitcmd[0], splitcmd[1:]...)
 			if err != nil {
-				fmt.Println(err)
+				log.Fatal(err)
 				continue
 			}
 		}
@@ -310,7 +310,9 @@ func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {
 func startpack(intgroot string, packagename string) {
 	os.Chdir(pkgdir)
 	archivename := intgroot + "/" + packagename + "-" + version + ".intg.tar.zst"
-	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".")
+	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
+		"--exclude", "MTREE", "--exclude", ".PACKAGE",
+	)
 	archivefile, err := os.Open(archivename)
 	if err != nil {
 		log.Fatal("error during reading archive file")
@@ -322,11 +324,12 @@ func startpack(intgroot string, packagename string) {
 	fmt.Println(intb, "Generating MTREE File with bsdtar...")
 	executecmdwithstdinfile(archivereader, "bsdtar", "-cf", ".MTREE",
 		"--format=mtree", "--options", "!all,use-set,type,uid,gid,mode,time,size,sha256,link",
-		"@-",
+		"@-", "--exclude", "MTREE", "--exclude", ".PACKAGE",
 	)
 
 	fmt.Println(intb, "Creating main archive with bsdtar...")
-	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".")
+	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
+		"--exclude", ".MTREE", "--exclude", ".PACKAGE")
 
 }
 

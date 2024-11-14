@@ -183,7 +183,7 @@ func main() {
 			os.Chdir(srcdir)
 			// prep source
 			for _, v := range source {
-				if strings.Contains(v, ".git") {
+				if strings.HasSuffix(v, ".git") {
 					executecmd("git", "clone", v)
 				} else {
 					executecmd(downloader, downloaderopt, v)

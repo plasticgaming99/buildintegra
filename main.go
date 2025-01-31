@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -95,10 +96,10 @@ func main() {
 	initBuildDir()
 
 	os.Setenv("intgroot", intgrootdir)
-	os.Setenv("srcdir", intgrootdir+"/source")
-	srcdir = intgrootdir + "/source"
-	os.Setenv("pkgdir", intgrootdir+"/package")
-	pkgdir = intgrootdir + "/package"
+	os.Setenv("srcdir", filepath.Join(intgrootdir, "source"))
+	srcdir = filepath.Join(intgrootdir, "source")
+	os.Setenv("pkgdir", filepath.Join(intgrootdir, "package"))
+	pkgdir = filepath.Join(intgrootdir, "package")
 
 	textf := string(file)
 	textFile := strings.Split(textf, "\n")
@@ -119,10 +120,13 @@ func main() {
 		}
 
 		if strings.Contains(textFile[i], "$") {
-			textFile[i] = strings.ReplaceAll(textFile[i], "$pkgdir", pkgdir)
-			textFile[i] = strings.ReplaceAll(textFile[i], "$srcdir", srcdir)
-			textFile[i] = strings.ReplaceAll(textFile[i], "$intgroot", intgrootdir)
-			textFile[i] = strings.ReplaceAll(textFile[i], "$pkgver", version)
+			varReplacer := strings.NewReplacer(
+				"$pkgdir", pkgdir,
+				"$srcdir", srcdir,
+				"$intgroot", intgrootdir,
+				"$pkgver", version,
+			)
+			textFile[i] = varReplacer.Replace(textFile[i])
 		}
 
 		if strings.HasSuffix(textFile[i], `\`) {
@@ -254,13 +258,13 @@ func main() {
 					continue
 				}
 				if len(packagename) == 1 {
-					os.WriteFile(pkgdir+"/.PACKAGE", []byte(generatePackInfo(packagename[0])), 0644)
+					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(packagename[0])), 0644)
 					startpack(intgrootdir, packagename[0])
 					status = "packfin"
 					fmt.Println(intb, "Package Finished!!")
 					os.Exit(0)
 				} else {
-					os.WriteFile(pkgdir+"/.PACKAGE", []byte(generatePackInfo(packagename[shiftpack])), 0644)
+					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(packagename[shiftpack])), 0644)
 					startpack(intgrootdir, fakerootToPackage)
 				}
 			}
@@ -309,8 +313,8 @@ func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {
 
 func startpack(intgroot string, packagename string) {
 	os.Chdir(pkgdir)
-	archivename := intgroot + "/" + packagename + "-" + version + ".intg.tar.zst"
-	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
+	archivename := filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst")
+	executecmd("bsdtar", "-cf", filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst"), ".",
 		"--exclude", "MTREE", "--exclude", ".PACKAGE",
 	)
 	archivefile, err := os.Open(archivename)
@@ -328,7 +332,7 @@ func startpack(intgroot string, packagename string) {
 	)
 
 	fmt.Println(intb, "Creating main archive with bsdtar...")
-	executecmd("bsdtar", "-cf", intgroot+"/"+packagename+"-"+version+".intg.tar.zst", ".",
+	executecmd("bsdtar", "-cf", filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst"), ".",
 		"--exclude", ".MTREE", "--exclude", ".PACKAGE")
 
 }

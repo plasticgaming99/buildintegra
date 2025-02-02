@@ -67,8 +67,13 @@ func init() {
 		}
 		if strings.Contains(configfile[i], "export") {
 			splitcmd := strings.SplitN(configfile[i], " ", 2)
-			splittedvar := strings.SplitN(splitcmd[1], "=", 2)
-			os.Setenv(splittedvar[0], splittedvar[1])
+			if strings.Contains(splitcmd[1], "+=") {
+				splittedvar := strings.SplitN(splitcmd[1], "=", 2)
+				os.Setenv(splittedvar[0], os.Getenv(splittedvar[0])+splittedvar[1])
+			} else if strings.Contains(configfile[i], "=") {
+				splittedvar := strings.SplitN(splitcmd[1], "=", 2)
+				os.Setenv(splittedvar[0], splittedvar[1])
+			}
 		}
 	}
 }
@@ -131,13 +136,19 @@ func main() {
 
 		if strings.HasSuffix(textFile[i], `\`) {
 			ii := 0
+			toappend := string("")
 			for ii = 0; len(textFile[i:]) > ii; ii++ {
 				if !strings.HasSuffix(textFile[i+ii], `\`) {
+					toappend += textFile[i+ii]
 					break
+				} else {
+					runeline := []rune(textFile[i+ii])
+					toappend += string(runeline[:len(runeline)-1])
 				}
 			}
-			textFile = append(textFile[:i+1], textFile[i+ii+1:]...)
+			textFile = append(append(textFile[:i], toappend), textFile[i+ii+1:]...)
 		}
+
 		if strings.Contains(textFile[i], " = ") && !strings.Contains(textFile[i], "export") && (status == "setup" || fakeroot) {
 			maybevar := strings.Split(textFile[i], " = ")
 			switch maybevar[0] {
@@ -245,9 +256,16 @@ func main() {
 		if strings.HasPrefix(textFile[i], "cd") {
 			os.Chdir(strings.Split(textFile[i], " ")[1])
 		} else if strings.Contains(textFile[i], "export") {
-			splitcmd := strings.SplitN(textFile[i], " ", 2)
-			splittedvar := strings.SplitN(splitcmd[1], "=", 2)
-			os.Setenv(splittedvar[0], splittedvar[1])
+			if strings.Contains(textFile[i], "export") {
+				splitcmd := strings.SplitN(textFile[i], " ", 2)
+				if strings.Contains(splitcmd[1], "+=") {
+					splittedvar := strings.SplitN(splitcmd[1], "=", 2)
+					os.Setenv(splittedvar[0], os.Getenv(splittedvar[0])+splittedvar[1])
+				} else if strings.Contains(textFile[i], "=") {
+					splittedvar := strings.SplitN(splitcmd[1], "=", 2)
+					os.Setenv(splittedvar[0], splittedvar[1])
+				}
+			}
 		} else if strings.HasPrefix(textFile[i], ":end") {
 			switch strings.Split(textFile[i], " ")[1] {
 			case "build":

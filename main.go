@@ -65,10 +65,26 @@ func init() {
 		if strings.Contains(configfile[i], `"`) {
 			configfile[i] = strings.ReplaceAll(configfile[i], `"`, "")
 		}
+
+		if strings.HasSuffix(configfile[i], `\`) {
+			ii := 0
+			toappend := string("")
+			for ii = 0; len(configfile[i:]) > ii; ii++ {
+				if !strings.HasSuffix(configfile[i+ii], `\`) {
+					toappend += configfile[i+ii]
+					break
+				} else {
+					runeline := []rune(configfile[i+ii])
+					toappend += string(runeline[:len(runeline)-1])
+				}
+			}
+			configfile = append(append(configfile[:i], toappend), configfile[i+ii+1:]...)
+		}
+
 		if strings.Contains(configfile[i], "export") {
 			splitcmd := strings.SplitN(configfile[i], " ", 2)
 			if strings.Contains(splitcmd[1], "+=") {
-				splittedvar := strings.SplitN(splitcmd[1], "=", 2)
+				splittedvar := strings.SplitN(splitcmd[1], "+=", 2)
 				os.Setenv(splittedvar[0], os.Getenv(splittedvar[0])+splittedvar[1])
 			} else if strings.Contains(configfile[i], "=") {
 				splittedvar := strings.SplitN(splitcmd[1], "=", 2)

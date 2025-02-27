@@ -1,3 +1,6 @@
+// see LICENSE file for the license
+// simple package builder but not turing-complete
+
 package main
 
 import (
@@ -9,8 +12,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var (
@@ -37,6 +42,11 @@ var (
 
 	fakeroot          = false
 	fakerootToPackage = ""
+)
+
+// build(integra) options
+var (
+	lto = true
 )
 
 var intb = "= INTB =>"
@@ -82,13 +92,22 @@ func init() {
 		}
 
 		if strings.Contains(configfile[i], "export") {
-			splitcmd := strings.SplitN(configfile[i], " ", 2)
-			if strings.Contains(splitcmd[1], "+=") {
-				splittedvar := strings.SplitN(splitcmd[1], "+=", 2)
-				os.Setenv(splittedvar[0], os.Getenv(splittedvar[0])+splittedvar[1])
-			} else if strings.Contains(configfile[i], "=") {
-				splittedvar := strings.SplitN(splitcmd[1], "=", 2)
-				os.Setenv(splittedvar[0], splittedvar[1])
+			_, spcmd, _ := strings.Cut(configfile[i], " ")
+			os.Setenv(envSetter(spcmd))
+		} else if strings.Contains(configfile[i], "setopt") {
+			_, splitcmd, chk := strings.Cut(configfile[i], " ")
+			if !chk {
+				fmt.Println("error found in config file at line ", i)
+			}
+			spcmd, sparg, chk := strings.Cut(splitcmd, "=")
+			if !chk {
+				fmt.Println("error found in config file at line ", i)
+			}
+			switch spcmd {
+			case "downloader":
+				downloader = sparg
+			case "downloaderopt":
+				downloaderopt = sparg
 			}
 		}
 	}
@@ -98,7 +117,7 @@ func main() {
 	fmt.Println("buildintegra")
 	fmt.Println(strings.Join(os.Args, ""))
 	// start from 2, 2 for pkgname, 3 for pkgver, 4 for intgroot, 5 for pkgdir
-	if strings.Contains(strings.Join(os.Args, ""), "PackageWithFakeroot") {
+	if slices.Contains(os.Args, "PackageWithFakeroot") {
 		fakeroot = true
 		fakerootToPackage = os.Args[2]
 	}
@@ -136,18 +155,10 @@ func main() {
 			continue
 		}
 
+		// don't place custom commands before this code,
+		// it proceeds comments and empty lines.
 		if strings.HasPrefix(textFile[i], "//") || textFile[i] == "" {
 			continue
-		}
-
-		if strings.Contains(textFile[i], "$") {
-			varReplacer := strings.NewReplacer(
-				"$pkgdir", pkgdir,
-				"$srcdir", srcdir,
-				"$intgroot", intgrootdir,
-				"$pkgver", version,
-			)
-			textFile[i] = varReplacer.Replace(textFile[i])
 		}
 
 		if strings.HasSuffix(textFile[i], `\`) {
@@ -163,6 +174,28 @@ func main() {
 				}
 			}
 			textFile = append(append(textFile[:i], toappend), textFile[i+ii+1:]...)
+		}
+
+		if strings.Contains(textFile[i], "$pkgname") && status != "package" {
+			fmt.Println(intb, "err: you can't use pkgname with outside of package (currently)")
+		}
+
+		if strings.Contains(textFile[i], "$") {
+			pkgname := func() (aa string) {
+				if len(packagename) == 1 {
+					return packagename[0]
+				} else {
+					return fakerootToPackage
+				}
+			}()
+			varReplacer := strings.NewReplacer(
+				"$pkgdir", pkgdir,
+				"$srcdir", srcdir,
+				"$intgroot", intgrootdir,
+				"$pkgname", pkgname,
+				"$pkgver", version,
+			)
+			textFile[i] = varReplacer.Replace(textFile[i])
 		}
 
 		if strings.Contains(textFile[i], " = ") && !strings.Contains(textFile[i], "export") && (status == "setup" || fakeroot) {
@@ -204,6 +237,26 @@ func main() {
 			continue
 		}
 
+		// safe to modify from here (maybe)
+		{
+			if strings.Contains(textFile[i], "options") {
+				splOpt := strings.Split(textFile[i], " ")[0:]
+				wg := &sync.WaitGroup{}
+				for i := 0; i < len(splOpt); i++ {
+					wg.Add(1)
+					go func() {
+						if splOpt[i] == "!lto" {
+							lto = false
+						} else if splOpt[i] == "lto" {
+							lto = true
+						}
+						wg.Done()
+					}()
+					wg.Wait()
+				}
+			}
+		}
+
 		if strings.Contains(textFile[i], "build:") {
 			if fakeroot {
 				frSkipFunc = true
@@ -211,11 +264,19 @@ func main() {
 			}
 			status = "build"
 			fmt.Println(intb, "Start build...")
+			ltoflags := os.Getenv("LTOFLAGS")
+			if ltoflags != "" && lto {
+				os.Setenv("CFLAGS", os.Getenv("CFLAGS")+" "+ltoflags)
+				os.Setenv("CXXFLAGS", os.Getenv("CXXFLAGS")+" "+ltoflags)
+				os.Setenv("LDFLAGS", os.Getenv("LDFLAGS")+" "+ltoflags)
+			}
 			os.Chdir(srcdir)
 			// prep source
 			for _, v := range source {
 				if strings.HasSuffix(v, ".git") {
 					executecmd("git", "clone", v)
+				} else if strings.HasPrefix(v, "git") {
+					executecmd("git", "clone", string([]rune(v)[4:]))
 				} else {
 					executecmd(downloader, downloaderopt, v)
 				}
@@ -256,10 +317,14 @@ func main() {
 				if !fakeroot {
 					fmt.Println(intb, "Start packaging ", subpackagename, " ...")
 				}
-				os.RemoveAll(pkgdir)
+				// reduce overwrite with splitted dir
+				// also, cd to intgroot(where INTGBUILD files are available)
+				// prepare for start fakeroot on correct directory
 				os.Chdir(intgrootdir)
-				os.Mkdir("package", os.ModePerm)
 				status = "package"
+				pdir := filepath.Join(intgrootdir, "pkg-"+subpackagename)
+				os.Mkdir(pdir, os.ModePerm)
+				pkgdir = pdir
 				if !fakeroot {
 					fmt.Println(intb, "Start fakeroot environment...")
 					executecmd("fakeroot", os.Args[0], "PackageWithFakeroot", subpackagename)
@@ -274,13 +339,7 @@ func main() {
 		} else if strings.Contains(textFile[i], "export") {
 			if strings.Contains(textFile[i], "export") {
 				splitcmd := strings.SplitN(textFile[i], " ", 2)
-				if strings.Contains(splitcmd[1], "+=") {
-					splittedvar := strings.SplitN(splitcmd[1], "=", 2)
-					os.Setenv(splittedvar[0], os.Getenv(splittedvar[0])+splittedvar[1])
-				} else if strings.Contains(textFile[i], "=") {
-					splittedvar := strings.SplitN(splitcmd[1], "=", 2)
-					os.Setenv(splittedvar[0], splittedvar[1])
-				}
+				os.Setenv(envSetter(splitcmd[1]))
 			}
 		} else if strings.HasPrefix(textFile[i], ":end") {
 			switch strings.Split(textFile[i], " ")[1] {
@@ -291,15 +350,17 @@ func main() {
 				if !fakeroot {
 					continue
 				}
+				// single package
 				if len(packagename) == 1 {
 					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(packagename[0])), 0644)
-					startpack(intgrootdir, packagename[0])
+					startpack(intgrootdir, packagename[0], false)
 					status = "packfin"
 					fmt.Println(intb, "Package Finished!!")
 					os.Exit(0)
-				} else {
+				} else // multi-package
+				{
 					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(packagename[shiftpack])), 0644)
-					startpack(intgrootdir, fakerootToPackage)
+					startpack(intgrootdir, fakerootToPackage, true)
 				}
 			}
 		} else if status == "build" || status == "package" {
@@ -345,8 +406,16 @@ func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {
 	toexec.Wait()
 }
 
-func startpack(intgroot string, packagename string) {
-	os.Chdir(pkgdir)
+func startpack(intgroot string, packagename string, dirpersubpkg bool) {
+	if dirpersubpkg {
+		pdir := filepath.Join(intgroot, "pkg-"+packagename)
+		os.Mkdir(pdir, os.ModePerm)
+		os.Chdir(pdir)
+	} else {
+		os.Mkdir(pkgdir, os.ModePerm)
+		os.Chdir(pkgdir)
+	}
+
 	archivename := filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst")
 	executecmd("bsdtar", "-cf", filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst"), ".",
 		"--exclude", "MTREE", "--exclude", ".PACKAGE",
@@ -446,4 +515,18 @@ func splitNparse(cmdIn string) (returnSlice []string) {
 		}
 	}
 	return returnSlice
+}
+
+func envSetter(inst string) (name string, env string) {
+	if strings.Contains(inst, "+=") {
+		splittedvar := strings.SplitN(inst, "+=", 2)
+		return splittedvar[0], os.Getenv(splittedvar[0]) + " " + splittedvar[1]
+	} else if strings.Contains(inst, "-=") {
+		splittedvar := strings.SplitN(inst, "-=", 2)
+		return splittedvar[0], strings.TrimSpace(strings.ReplaceAll(os.Getenv(splittedvar[0]), splittedvar[1], ""))
+	} else if strings.Contains(inst, "=") {
+		splittedvar := strings.SplitN(inst, "=", 2)
+		return splittedvar[0], splittedvar[1]
+	}
+	return "", ""
 }

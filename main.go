@@ -191,7 +191,6 @@ func main() {
 				cutted := textFile[i][first+2 : last]
 				textFile[i] = strings.Replace(textFile[i], uncutt, os.Getenv(cutted), -1)
 			}
-			strings.Index(textFile[i], "${")
 		} else if strings.Contains(textFile[i], "$") {
 			pkgname := func() (aa string) {
 				if len(packagename) == 1 {

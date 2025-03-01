@@ -161,6 +161,7 @@ func main() {
 			continue
 		}
 
+		// and here, it proceeds to continue line
 		if strings.HasSuffix(textFile[i], `\`) {
 			ii := 0
 			toappend := string("")
@@ -180,7 +181,18 @@ func main() {
 			fmt.Println(intb, "err: you can't use pkgname with outside of package (currently)")
 		}
 
-		if strings.Contains(textFile[i], "$") {
+		if strings.Contains(textFile[i], "${") {
+			// it just works
+			// replace variable while contains
+			for strings.Contains(textFile[i], "${") {
+				first := strings.Index(textFile[i], "${")
+				last := strings.Index(textFile[i], "}")
+				uncutt := textFile[i][first : last+1]
+				cutted := textFile[i][first+2 : last]
+				textFile[i] = strings.Replace(textFile[i], uncutt, os.Getenv(cutted), -1)
+			}
+			strings.Index(textFile[i], "${")
+		} else if strings.Contains(textFile[i], "$") {
 			pkgname := func() (aa string) {
 				if len(packagename) == 1 {
 					return packagename[0]

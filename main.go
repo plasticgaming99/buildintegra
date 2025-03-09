@@ -34,8 +34,8 @@ var (
 
 	source []string
 
-	downloader    = "aria2c"
-	downloaderopt = "--auto-file-renaming=false"
+	downloader     = "aria2c"
+	downloaderopts = []string{"--auto-file-renaming=false"}
 
 	pkgdir string
 	srcdir string
@@ -107,7 +107,7 @@ func init() {
 			case "downloader":
 				downloader = sparg
 			case "downloaderopt":
-				downloaderopt = sparg
+				downloaderopts = strings.Split(sparg, " ")
 			}
 		}
 	}
@@ -289,7 +289,7 @@ func main() {
 				} else if strings.HasPrefix(v, "git") {
 					executecmd("git", "clone", string([]rune(v)[4:]))
 				} else {
-					executecmd(downloader, downloaderopt, v)
+					executecmd(downloader, append(downloaderopts, v)...)
 				}
 			}
 			continue

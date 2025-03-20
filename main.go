@@ -192,6 +192,10 @@ func main() {
 				textFile[i] = strings.Replace(textFile[i], uncutt, os.Getenv(cutted), -1)
 			}
 		} else if strings.Contains(textFile[i], "$") {
+			/*pwd, err := os.Getwd()
+			if err != nil {
+				log.Fatal("failed to get working directory(why)")
+			}*/
 			pkgname := func() (aa string) {
 				if len(packagename) == 1 {
 					return packagename[0]
@@ -205,6 +209,7 @@ func main() {
 				"$intgroot", intgrootdir,
 				"$pkgname", pkgname,
 				"$pkgver", version,
+				"$pwd", rsUnwrap(os.Getwd()),
 			)
 			textFile[i] = varReplacer.Replace(textFile[i])
 		}
@@ -235,7 +240,7 @@ func main() {
 			case "builddeps":
 				builddeps = append(builddeps, maybevar[1])
 			case "conflicts":
-				depends = append(depends, maybevar[1])
+				conflicts = append(depends, maybevar[1])
 			case "provides":
 				provides = append(provides, maybevar[1])
 			case "url":
@@ -540,4 +545,11 @@ func envSetter(inst string) (name string, env string) {
 		return splittedvar[0], splittedvar[1]
 	}
 	return "", ""
+}
+
+func rsUnwrap[T any](val T, err error) T {
+	if err != nil {
+		log.Fatal(err)
+	}
+	return val
 }

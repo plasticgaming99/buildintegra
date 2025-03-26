@@ -40,6 +40,8 @@ var (
 	pkgdir string
 	srcdir string
 
+	confFilePlace = "/etc/bintegra.conf"
+
 	fakeroot          = false
 	fakerootToPackage = ""
 )
@@ -59,16 +61,16 @@ func initBuildDir() {
 
 // Real init that read BuildIntegra configuration.
 func init() {
-	_, err := os.Stat("/etc/bintegra.conf")
-	if err != nil {
-		return
+	if cf := os.Getenv("BINTG_CONFIGFILE"); cf != "" {
+		confFilePlace = cf
 	}
 
-	file, err := os.ReadFile("/etc/bintegra.conf")
+	file, err := os.ReadFile(confFilePlace)
 	if err != nil {
 		fmt.Println(intb, "Error reading configuration")
 		return
 	}
+
 	configfile := strings.Split(string(file), "\n")
 	file = nil
 	for i := 0; i < len(configfile); i++ {
@@ -191,7 +193,8 @@ func main() {
 				cutted := textFile[i][first+2 : last]
 				textFile[i] = strings.Replace(textFile[i], uncutt, os.Getenv(cutted), -1)
 			}
-		} else if strings.Contains(textFile[i], "$") {
+		}
+		if strings.Contains(textFile[i], "$") {
 			/*pwd, err := os.Getwd()
 			if err != nil {
 				log.Fatal("failed to get working directory(why)")

@@ -147,7 +147,6 @@ func main() {
 	textFile := strings.Split(textf, "\n")
 	status := "setup"
 	frSkipFunc := false
-	shiftpack := int(0)
 	for i := 0; i < len(textFile); i++ {
 		textFile[i] = strings.TrimSpace(textFile[i])
 		if frSkipFunc && strings.HasPrefix(textFile[i], ":end") {
@@ -378,7 +377,7 @@ func main() {
 					os.Exit(0)
 				} else // multi-package
 				{
-					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(packagename[shiftpack])), 0644)
+					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(fakerootToPackage)), 0644)
 					startpack(intgrootdir, fakerootToPackage, true)
 				}
 			}

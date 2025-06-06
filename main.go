@@ -37,6 +37,8 @@ var (
 	downloader     = "aria2c"
 	downloaderopts = []string{"--auto-file-renaming=false"}
 
+	shell = "sh"
+
 	pkgdir string
 	srcdir string
 
@@ -178,8 +180,10 @@ func main() {
 			textFile = append(append(textFile[:i], toappend), textFile[i+ii+1:]...)
 		}
 
+		// maybe I should add main pkg name like pkgbase
 		if strings.Contains(textFile[i], "$pkgname") && status != "package" {
-			fmt.Println(intb, "err: you can't use pkgname with outside of package (currently)")
+			fmt.Println(intb, "err: you should't use pkgname with outside of package block.")
+			fmt.Println(strings.Repeat(" ", len([]rune(intb))), "first package name will be used.")
 		}
 
 		if strings.Contains(textFile[i], "${") {
@@ -193,13 +197,15 @@ func main() {
 				textFile[i] = strings.Replace(textFile[i], uncutt, os.Getenv(cutted), -1)
 			}
 		}
+
+		// replace var
 		if strings.Contains(textFile[i], "$") {
 			/*pwd, err := os.Getwd()
 			if err != nil {
 				log.Fatal("failed to get working directory(why)")
 			}*/
 			pkgname := func() (aa string) {
-				if len(packagename) == 1 {
+				if !fakeroot {
 					return packagename[0]
 				} else {
 					return fakerootToPackage
@@ -352,6 +358,7 @@ func main() {
 			}
 		}
 
+		// process internal command
 		if strings.HasPrefix(textFile[i], "cd") {
 			os.Chdir(strings.Split(textFile[i], " ")[1])
 		} else if strings.Contains(textFile[i], "export") {
@@ -381,9 +388,38 @@ func main() {
 					startpack(intgrootdir, fakerootToPackage, true)
 				}
 			}
-		} else if status == "build" || status == "package" {
-			splitcmd := splitNparse(textFile[i])
-			err := executecmdwitherror(splitcmd[0], splitcmd[1:]...)
+		} else
+		// execute external command
+		if status == "build" || status == "package" {
+			var (
+				splitcmd = splitNparse(textFile[i])
+				maincmd  = 0
+				osenv    = os.Environ()
+				err      error
+			)
+
+			for i, s := range splitcmd {
+				if strings.Contains(s, "=") {
+					st, _, _ := strings.Cut(s, "=")
+					osenv = slices.DeleteFunc(osenv, func(str string) bool {
+						return strings.Contains(str, st+"=")
+					})
+					osenv = slices.Insert(osenv, 0, s)
+				} else if s == "$" {
+					continue
+				} else {
+					maincmd = i
+					break
+				}
+			}
+
+			if splitcmd[0] == "$" {
+				shellarg := []string{"-c"}
+				fmt.Println(shell, shellarg, splitcmd[maincmd:])
+				err = executeCmdEnvErr(shell, append(shellarg, strings.Join(splitcmd[maincmd:], " ")), osenv)
+			} else {
+				err = executeCmdEnvErr(splitcmd[maincmd], splitcmd[maincmd+1:], osenv)
+			}
 			if err != nil {
 				log.Fatal(err)
 				continue
@@ -405,13 +441,22 @@ func executecmd(cmdname string, args ...string) {
 	toexec.Wait()
 }
 
-func executecmdwitherror(cmdname string, args ...string) error {
+/*func executecmdwitherror(cmdname string, args ...string) error {
 	toexec := exec.Command(cmdname, args...)
 	toexec.Stdin = os.Stdin
 	toexec.Stdout = os.Stdout
 	toexec.Stderr = os.Stderr
 	toexec.Env = os.Environ()
 	return toexec.Run()
+}*/
+
+func executeCmdEnvErr(cmdname string, argv []string, envir []string) error {
+	texec := exec.Command(cmdname, argv...)
+	texec.Stdin = os.Stdin
+	texec.Stdout = os.Stdout
+	texec.Stderr = os.Stderr
+	texec.Env = envir
+	return texec.Run()
 }
 
 func executecmdwithstdinfile(infile io.Reader, cmdname string, args ...string) {

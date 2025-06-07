@@ -95,6 +95,18 @@ func init() {
 			configfile = append(append(configfile[:i], toappend), configfile[i+ii+1:]...)
 		}
 
+		if strings.Contains(configfile[i], "${") {
+			// it just works
+			// replace variable while contains
+			for strings.Contains(configfile[i], "${") {
+				first := strings.Index(configfile[i], "${")
+				last := strings.Index(configfile[i], "}")
+				uncutt := configfile[i][first : last+1]
+				cutted := configfile[i][first+2 : last]
+				configfile[i] = strings.Replace(configfile[i], uncutt, os.Getenv(cutted), -1)
+			}
+		}
+
 		if strings.Contains(configfile[i], "export") {
 			_, spcmd, _ := strings.Cut(configfile[i], " ")
 			os.Setenv(envSetter(spcmd))

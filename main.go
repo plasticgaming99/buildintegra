@@ -35,7 +35,10 @@ var (
 	source []string
 
 	downloader     = "aria2c"
-	downloaderopts = []string{"--auto-file-renaming=false"}
+	downloaderArgs = []string{"--auto-file-renaming=false"}
+
+	gitExecutable = "git"
+	gitArgs       = []string{}
 
 	shell = "sh"
 
@@ -46,6 +49,9 @@ var (
 
 	fakeroot          = false
 	fakerootToPackage = ""
+
+	additionalStats = []string{"prepare", "test"}
+	cmdRunnableStat = []string{"prepare", "build", "package", "test"}
 )
 
 // build(integra) options
@@ -61,75 +67,9 @@ func initBuildDir() {
 	}
 }
 
-// Real init that read BuildIntegra configuration.
-func init() {
-	if cf := os.Getenv("BINTG_CONFIGFILE"); cf != "" {
-		confFilePlace = cf
-	}
-
-	file, err := os.ReadFile(confFilePlace)
-	if err != nil {
-		fmt.Println(intb, "Error reading configuration")
-		return
-	}
-
-	configfile := strings.Split(string(file), "\n")
-	file = nil
-	for i := 0; i < len(configfile); i++ {
-		if strings.Contains(configfile[i], `"`) {
-			configfile[i] = strings.ReplaceAll(configfile[i], `"`, "")
-		}
-
-		if strings.HasSuffix(configfile[i], `\`) {
-			ii := 0
-			toappend := string("")
-			for ii = 0; len(configfile[i:]) > ii; ii++ {
-				if !strings.HasSuffix(configfile[i+ii], `\`) {
-					toappend += configfile[i+ii]
-					break
-				} else {
-					runeline := []rune(configfile[i+ii])
-					toappend += string(runeline[:len(runeline)-1])
-				}
-			}
-			configfile = append(append(configfile[:i], toappend), configfile[i+ii+1:]...)
-		}
-
-		if strings.Contains(configfile[i], "${") {
-			// it just works
-			// replace variable while contains
-			for strings.Contains(configfile[i], "${") {
-				first := strings.Index(configfile[i], "${")
-				last := strings.Index(configfile[i], "}")
-				uncutt := configfile[i][first : last+1]
-				cutted := configfile[i][first+2 : last]
-				configfile[i] = strings.Replace(configfile[i], uncutt, os.Getenv(cutted), -1)
-			}
-		}
-
-		if strings.Contains(configfile[i], "export") {
-			_, spcmd, _ := strings.Cut(configfile[i], " ")
-			os.Setenv(envSetter(spcmd))
-		} else if strings.Contains(configfile[i], "setopt") {
-			_, splitcmd, chk := strings.Cut(configfile[i], " ")
-			if !chk {
-				fmt.Println("error found in config file at line ", i)
-			}
-			spcmd, sparg, chk := strings.Cut(splitcmd, "=")
-			if !chk {
-				fmt.Println("error found in config file at line ", i)
-			}
-			switch spcmd {
-			case "downloader":
-				downloader = sparg
-			case "downloaderopt":
-				downloaderopts = strings.Split(sparg, " ")
-			}
-		}
-	}
-}
-
 func main() {
+	textFile := make([]string, 0, 192)
+
 	fmt.Println("buildintegra")
 	fmt.Println(strings.Join(os.Args, ""))
 	// start from 2, 2 for pkgname, 3 for pkgver, 4 for intgroot, 5 for pkgdir
@@ -138,16 +78,39 @@ func main() {
 		fakerootToPackage = os.Args[2]
 	}
 
-	file, err := os.ReadFile("INTGBUILD")
+	if cf := os.Getenv("BINTG_CONFIGFILE"); cf != "" {
+		confFilePlace = cf
+	}
+
+	configFile, err := os.Open(confFilePlace)
+	if err != nil {
+		fmt.Println(intb, "Error reading configuration")
+		return
+	}
+	confScanner := bufio.NewScanner(configFile)
+	for confScanner.Scan() {
+		textFile = append(textFile, confScanner.Text())
+	}
+
+	intgFile, err := os.Open("INTGBUILD")
 	if err != nil {
 		fmt.Println("File isn't exists, or broken.")
 		os.Exit(1)
+	}
+	intgScanner := bufio.NewScanner(intgFile)
+	for intgScanner.Scan() {
+		textFile = append(textFile, intgScanner.Text())
 	}
 
 	intgrootdir, err := os.Getwd()
 	if err != nil {
 		fmt.Println("internal error during getting root dir")
+		os.Exit(1)
 	}
+
+	// yeah close them
+	configFile.Close()
+	intgFile.Close()
 
 	initBuildDir()
 
@@ -157,10 +120,14 @@ func main() {
 	os.Setenv("pkgdir", filepath.Join(intgrootdir, "package"))
 	pkgdir = filepath.Join(intgrootdir, "package")
 
-	textf := string(file)
-	textFile := strings.Split(textf, "\n")
 	status := "setup"
 	frSkipFunc := false
+	// maybe reusable cut
+	var (
+		key string
+		val string
+		con bool
+	)
 	for i := 0; i < len(textFile); i++ {
 		textFile[i] = strings.TrimSpace(textFile[i])
 		if frSkipFunc && strings.HasPrefix(textFile[i], ":end") {
@@ -206,7 +173,7 @@ func main() {
 				last := strings.Index(textFile[i], "}")
 				uncutt := textFile[i][first : last+1]
 				cutted := textFile[i][first+2 : last]
-				textFile[i] = strings.Replace(textFile[i], uncutt, os.Getenv(cutted), -1)
+				textFile[i] = strings.ReplaceAll(textFile[i], uncutt, os.Getenv(cutted))
 			}
 		}
 
@@ -235,44 +202,48 @@ func main() {
 		}
 
 		if strings.Contains(textFile[i], " = ") && !strings.Contains(textFile[i], "export") && (status == "setup" || fakeroot) {
-			maybevar := strings.Split(textFile[i], " = ")
-			switch maybevar[0] {
+			key, val, con = strings.Cut(textFile[i], " = ")
+			if !con {
+				continue
+			}
+			switch key {
 			case "packagename":
-				packagename = append(packagename, maybevar[1])
+				packagename = append(packagename, val)
 			case "version":
-				version = maybevar[1]
+				version = val
 			case "release":
-				a, err := strconv.Atoi(maybevar[1])
+				a, err := strconv.Atoi(val)
 				if err != nil {
 					fmt.Println("release number is not int")
 				}
 				release = a
 			case "license":
-				license = maybevar[1]
+				license = val
 			case "architecture":
-				architecture = maybevar[1]
+				architecture = val
 			case "description":
-				description = maybevar[1]
+				description = val
 			case "depends":
-				depends = append(depends, maybevar[1])
+				depends = append(depends, val)
 			case "optdeps":
-				optdeps = append(optdeps, maybevar[1])
+				optdeps = append(optdeps, val)
 			case "builddeps":
-				builddeps = append(builddeps, maybevar[1])
+				builddeps = append(builddeps, val)
 			case "conflicts":
-				conflicts = append(depends, maybevar[1])
+				conflicts = append(depends, val)
 			case "provides":
-				provides = append(provides, maybevar[1])
+				provides = append(provides, val)
 			case "url":
-				url = maybevar[1]
+				url = val
 			case "source":
-				source = append(source, maybevar[1])
+				source = append(source, val)
 			default:
 				//not var!
 			}
 			continue
 		}
 
+		// parsing is almost finished,
 		// safe to modify from here (maybe)
 		{
 			if strings.Contains(textFile[i], "options") {
@@ -293,7 +264,7 @@ func main() {
 			}
 		}
 
-		if strings.Contains(textFile[i], "build:") {
+		if textFile[i] == "build:" {
 			if fakeroot {
 				frSkipFunc = true
 				continue
@@ -310,11 +281,14 @@ func main() {
 			// prep source
 			for _, v := range source {
 				if strings.HasSuffix(v, ".git") {
-					executecmd("git", "clone", v)
+					repo := v
+					gitClone(repo)
 				} else if strings.HasPrefix(v, "git") {
-					executecmd("git", "clone", string([]rune(v)[4:]))
+					repo := string([]rune(v)[4:])
+					gitClone(repo)
+
 				} else {
-					executecmd(downloader, append(downloaderopts, v)...)
+					executecmd(downloader, append(downloaderArgs, v)...)
 				}
 			}
 			continue
@@ -336,7 +310,8 @@ func main() {
 			} else {
 				toSplit := []rune(textFile[i])
 				toSplit = toSplit[:len(toSplit)-1]
-				subpackagename := strings.Split(string(toSplit), " ")[1]
+				_, val, _ = strings.Cut(string(toSplit), " ")
+				subpackagename := val
 				subpackageavaliable := false
 				for i := 0; len(packagename) > i; i++ {
 					if subpackagename == packagename[i] {
@@ -368,18 +343,47 @@ func main() {
 				}
 				continue
 			}
+		} else
+		// other status (not build, package)
+		if slices.Contains(additionalStats, cutSingleRight(textFile[i])) {
+			// nothing!!
+			continue
 		}
 
 		// process internal command
 		if strings.HasPrefix(textFile[i], "cd") {
-			os.Chdir(strings.Split(textFile[i], " ")[1])
-		} else if strings.Contains(textFile[i], "export") {
-			if strings.Contains(textFile[i], "export") {
-				splitcmd := strings.SplitN(textFile[i], " ", 2)
-				os.Setenv(envSetter(splitcmd[1]))
+			_, val, con = strings.Cut(textFile[i], " ")
+			if con {
+				os.Chdir(val)
+			}
+		} else if strings.HasPrefix(textFile[i], "export") {
+			_, val, con = strings.Cut(textFile[i], " ")
+			if con {
+				os.Setenv(envSetter(val))
+			}
+		} else if strings.HasPrefix(textFile[i], "setopt") {
+			_, val, con = strings.Cut(textFile[i], " ")
+			if con {
+				key, val, _ = strings.Cut(val, "=")
+				switch key {
+				case "downloader":
+					downloader = val
+				case "downloaderArgs":
+					downloaderArgs = strings.Split(val, " ")
+				case "git":
+					gitExecutable = val
+				case "gitArgs":
+					gitArgs = strings.Split(val, " ")
+				default:
+					fmt.Println(intb, "Unknown option: ", val)
+				}
 			}
 		} else if strings.HasPrefix(textFile[i], ":end") {
-			switch strings.Split(textFile[i], " ")[1] {
+			_, val, con = strings.Cut(textFile[i], " ")
+			if !con {
+				continue
+			}
+			switch val {
 			case "build":
 				status = "buildfin"
 				fmt.Println(intb, "Build Finished.")
@@ -399,10 +403,15 @@ func main() {
 					os.WriteFile(filepath.Join(pkgdir, ".PACKAGE"), []byte(generatePackInfo(fakerootToPackage)), 0644)
 					startpack(intgrootdir, fakerootToPackage, true)
 				}
+			default:
+				if slices.Contains(additionalStats, val) {
+					fmt.Println(intb, "Step ", additionalStats, " finished.")
+				}
 			}
 		} else
+
 		// execute external command
-		if status == "build" || status == "package" {
+		if slices.Contains(cmdRunnableStat, status) {
 			var (
 				splitcmd = splitNparse(textFile[i])
 				maincmd  = 0
@@ -412,9 +421,9 @@ func main() {
 
 			for i, s := range splitcmd {
 				if strings.Contains(s, "=") {
-					st, _, _ := strings.Cut(s, "=")
+					key, _, _ := strings.Cut(s, "=")
 					osenv = slices.DeleteFunc(osenv, func(str string) bool {
-						return strings.Contains(str, st+"=")
+						return strings.Contains(str, key+"=")
 					})
 					osenv = slices.Insert(osenv, 0, s)
 				} else if s == "$" {
@@ -427,9 +436,11 @@ func main() {
 
 			if splitcmd[0] == "$" {
 				shellarg := []string{"-c"}
-				fmt.Println(shell, shellarg, splitcmd[maincmd:])
 				err = executeCmdEnvErr(shell, append(shellarg, strings.Join(splitcmd[maincmd:], " ")), osenv)
 			} else {
+				if len(splitcmd[maincmd:]) == maincmd {
+					executeCmdEnvErr(splitcmd[maincmd], nil, osenv)
+				}
 				err = executeCmdEnvErr(splitcmd[maincmd], splitcmd[maincmd+1:], osenv)
 			}
 			if err != nil {
@@ -441,6 +452,14 @@ func main() {
 			os.Exit(0)
 		}
 	}
+}
+
+func cutSingleLeft(s string) string {
+	return string([]rune(s)[0:])
+}
+
+func cutSingleRight(s string) string {
+	return string([]rune(s)[:len([]rune(s))-1])
 }
 
 func executecmd(cmdname string, args ...string) {
@@ -611,4 +630,23 @@ func rsUnwrap[T any](val T, err error) T {
 		log.Fatal(err)
 	}
 	return val
+}
+
+func gitClone(repo string) {
+	repoName := strings.Split(repo, "/")
+	repoDir, err := os.Stat(repoName[len(repoName)-1])
+	if err != nil {
+		if len(gitArgs) != 0 {
+			executecmd(gitExecutable, repo)
+		} else {
+			gitOpts := append(gitArgs, repo)
+			gitOpts = slices.Insert(gitOpts, 0, "clone")
+			executecmd(gitExecutable, gitOpts...)
+		}
+	}
+	if repoDir.IsDir() {
+		os.Chdir(repoDir.Name())
+		executecmd(gitExecutable, "pull")
+		os.Chdir("..")
+	}
 }

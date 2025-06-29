@@ -15,7 +15,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"sync"
 )
 
 var (
@@ -54,6 +53,8 @@ var (
 	cmdRunnableStat = []string{"prepare", "build", "package", "test"}
 )
 
+const intgBufSiz = 256
+
 // build(integra) options
 var (
 	lto = true
@@ -68,7 +69,7 @@ func initBuildDir() {
 }
 
 func main() {
-	textFile := make([]string, 0, 192)
+	textFile := make([]string, 0, intgBufSiz)
 
 	fmt.Println("buildintegra")
 	fmt.Println(strings.Join(os.Args, ""))
@@ -87,20 +88,24 @@ func main() {
 		fmt.Println(intb, "Error reading configuration")
 		return
 	}
-	confScanner := bufio.NewScanner(configFile)
+	bufConf := bufio.NewReader(configFile)
+	confScanner := bufio.NewScanner(bufConf)
 	for confScanner.Scan() {
 		textFile = append(textFile, confScanner.Text())
 	}
+	configFile.Close()
 
 	intgFile, err := os.Open("INTGBUILD")
 	if err != nil {
 		fmt.Println("File isn't exists, or broken.")
 		os.Exit(1)
 	}
-	intgScanner := bufio.NewScanner(intgFile)
+	bufIntg := bufio.NewReader(intgFile)
+	intgScanner := bufio.NewScanner(bufIntg)
 	for intgScanner.Scan() {
 		textFile = append(textFile, intgScanner.Text())
 	}
+	intgFile.Close()
 
 	intgrootdir, err := os.Getwd()
 	if err != nil {
@@ -247,19 +252,16 @@ func main() {
 		// safe to modify from here (maybe)
 		{
 			if strings.Contains(textFile[i], "options") {
-				splOpt := strings.Split(textFile[i], " ")[0:]
-				wg := &sync.WaitGroup{}
-				for i := 0; i < len(splOpt); i++ {
-					wg.Add(1)
-					go func() {
-						if splOpt[i] == "!lto" {
-							lto = false
-						} else if splOpt[i] == "lto" {
-							lto = true
-						}
-						wg.Done()
-					}()
-					wg.Wait()
+				splOpt := strings.Split(textFile[i], " ")
+				for _, st := range splOpt {
+					switch st {
+					case "lto":
+						lto = true
+					case "!lto":
+						lto = false
+					default:
+						continue
+					}
 				}
 			}
 		}
@@ -636,11 +638,11 @@ func gitClone(repo string) {
 	repoName := strings.Split(repo, "/")
 	repoDir, err := os.Stat(repoName[len(repoName)-1])
 	if err != nil {
-		if len(gitArgs) != 0 {
-			executecmd(gitExecutable, repo)
+		if len(gitArgs) == 0 {
+			executecmd(gitExecutable, "clone", repo)
 		} else {
-			gitOpts := append(gitArgs, repo)
-			gitOpts = slices.Insert(gitOpts, 0, "clone")
+			gitOpts := append([]string{"clone"}, repo)
+			gitOpts = append(gitOpts, gitArgs...)
 			executecmd(gitExecutable, gitOpts...)
 		}
 	}

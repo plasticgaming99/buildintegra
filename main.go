@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/plasticgaming99/buildintegra/integrity"
 )
 
 var (
@@ -91,7 +93,7 @@ func main() {
 	bufConf := bufio.NewReader(configFile)
 	confScanner := bufio.NewScanner(bufConf)
 	for confScanner.Scan() {
-		textFile = append(textFile, confScanner.Text())
+		textFile = append(textFile, strings.TrimSpace(confScanner.Text()))
 	}
 	configFile.Close()
 
@@ -103,7 +105,7 @@ func main() {
 	bufIntg := bufio.NewReader(intgFile)
 	intgScanner := bufio.NewScanner(bufIntg)
 	for intgScanner.Scan() {
-		textFile = append(textFile, intgScanner.Text())
+		textFile = append(textFile, strings.TrimSpace(intgScanner.Text()))
 	}
 	intgFile.Close()
 
@@ -134,7 +136,6 @@ func main() {
 		con bool
 	)
 	for i := 0; i < len(textFile); i++ {
-		textFile[i] = strings.TrimSpace(textFile[i])
 		if frSkipFunc && strings.HasPrefix(textFile[i], ":end") {
 			frSkipFunc = false
 			continue
@@ -484,7 +485,12 @@ func executecmd(cmdname string, args ...string) {
 }*/
 
 func executeCmdEnvErr(cmdname string, argv []string, envir []string) error {
-	texec := exec.Command(cmdname, argv...)
+	texec := &exec.Cmd{}
+	if argv != nil {
+		texec = exec.Command(cmdname, argv...)
+	} else {
+		texec = exec.Command(cmdname)
+	}
 	texec.Stdin = os.Stdin
 	texec.Stdout = os.Stdout
 	texec.Stderr = os.Stderr
@@ -512,7 +518,7 @@ func startpack(intgroot string, packagename string, dirpersubpkg bool) {
 		os.Chdir(pkgdir)
 	}
 
-	archivename := filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst")
+	/*archivename := filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst")
 	executecmd("bsdtar", "-cf", filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst"), ".",
 		"--exclude", "MTREE", "--exclude", ".PACKAGE",
 	)
@@ -528,7 +534,11 @@ func startpack(intgroot string, packagename string, dirpersubpkg bool) {
 	executecmdwithstdinfile(archivereader, "bsdtar", "-cf", ".MTREE",
 		"--format=mtree", "--options", "!all,use-set,type,uid,gid,mode,time,size,sha256,link",
 		"@-", "--exclude", "MTREE", "--exclude", ".PACKAGE",
-	)
+	)*/
+
+	fmt.Println(integrity.Generate(pkgdir))
+	fmt.Println(intb, "Generating .INTEGRITY...")
+	os.WriteFile(pkgdir+"/.INTEGRITY", []byte(integrity.Generate(pkgdir)), 0644)
 
 	fmt.Println(intb, "Creating main archive with bsdtar...")
 	executecmd("bsdtar", "-cf", filepath.Join(intgroot, packagename+"-"+version+".intg.tar.zst"), ".",
@@ -645,8 +655,7 @@ func gitClone(repo string) {
 			gitOpts = append(gitOpts, gitArgs...)
 			executecmd(gitExecutable, gitOpts...)
 		}
-	}
-	if repoDir.IsDir() {
+	} else if repoDir.Mode().IsDir() {
 		os.Chdir(repoDir.Name())
 		executecmd(gitExecutable, "pull")
 		os.Chdir("..")

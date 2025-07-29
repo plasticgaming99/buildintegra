@@ -536,7 +536,6 @@ func startpack(intgroot string, packagename string, dirpersubpkg bool) {
 		"@-", "--exclude", "MTREE", "--exclude", ".PACKAGE",
 	)*/
 
-	fmt.Println(integrity.Generate(pkgdir))
 	fmt.Println(intb, "Generating .INTEGRITY...")
 	os.WriteFile(pkgdir+"/.INTEGRITY", []byte(integrity.Generate(pkgdir)), 0644)
 
